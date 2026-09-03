@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 import praw
+from dotenv import load_dotenv
 from prawcore.exceptions import Forbidden, NotFound, Redirect
 
 LOGGER = logging.getLogger(__name__)
@@ -25,11 +26,17 @@ REDDIT_BASE_URL = "https://www.reddit.com"
 def create_reddit_client() -> praw.Reddit:
     """Create a read-only Reddit client from environment variables.
 
+    Local development may supply the variables through a repository-root
+    ``.env`` file. GitHub Actions will inject the same names from repository
+    secrets, so the application code stays identical in both environments.
+
     Required environment variables:
     - REDDIT_CLIENT_ID
     - REDDIT_CLIENT_SECRET
     - REDDIT_USER_AGENT
     """
+
+    load_dotenv()
 
     env_names = (
         "REDDIT_CLIENT_ID",
