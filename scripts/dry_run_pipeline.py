@@ -15,8 +15,9 @@ def main() -> None:
     print(
         "Dry run complete: "
         f"existing={result.existing_rows}, "
-        f"scraped={result.scraped_posts}, "
-        f"matched={result.matched_posts}, "
+        f"subreddits={result.subreddit_posts}, "
+        f"global_search={result.global_search_posts}, "
+        f"combined={result.combined_candidates}, "
         f"unique={result.unique_posts}, "
         f"uploaded={result.uploaded}"
     )
