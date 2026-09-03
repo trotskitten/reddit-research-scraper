@@ -113,3 +113,49 @@ def test_pipeline_does_not_upload_when_no_unique_posts(tmp_path, monkeypatch):
     assert result.unique_posts == 0
     assert result.uploaded is False
     assert uploads == []
+
+
+def test_dry_run_never_constructs_or_uploads_dataset(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+
+    snapshot = DatasetSnapshot(
+        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext\n",
+        rows=[],
+    )
+    unique_posts = [
+        {
+            "subreddit": "projectmanagement",
+            "id": "new-post",
+            "title": "Blocked in Jira",
+            "selftext": "Waiting on another team",
+        }
+    ]
+
+    monkeypatch.setattr(pipeline, "create_drive_service", lambda: "drive")
+    monkeypatch.setattr(pipeline, "get_dataset_file_id", lambda: "file-id")
+    monkeypatch.setattr(pipeline, "download_dataset", lambda service, file_id: snapshot)
+    monkeypatch.setattr(pipeline, "create_reddit_client", lambda: "reddit")
+    monkeypatch.setattr(pipeline, "scrape_posts", lambda reddit, subreddits, lookback_hours: [{}])
+    monkeypatch.setattr(
+        pipeline,
+        "filter_matching_posts",
+        lambda posts, pain_keywords, tools, case_sensitive=False: [{}],
+    )
+    monkeypatch.setattr(pipeline, "clean_posts", lambda posts: unique_posts)
+    monkeypatch.setattr(
+        pipeline,
+        "deduplicate_posts",
+        lambda new_posts, existing_posts: unique_posts,
+    )
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("Drive write path must not be called during dry run")
+
+    monkeypatch.setattr(pipeline, "append_rows_to_csv_bytes", fail_if_called)
+    monkeypatch.setattr(pipeline, "upload_dataset", fail_if_called)
+
+    result = pipeline.run_pipeline(config_path, dry_run=True)
+
+    assert result.unique_posts == 1
+    assert result.uploaded is False
