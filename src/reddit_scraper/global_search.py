@@ -61,7 +61,10 @@ def search_reddit_by_keywords(
     restricted to the exact configured lookback window and locally validated by
     the same whole-word/phrase matcher used elsewhere in the project.
 
-    A post returned by multiple tool searches is emitted only once.
+    A result from a tool-specific search must locally contain that same tool plus
+    at least one pain term. This protects the pipeline from fuzzy or imperfect
+    server-side search results. A post returned by multiple tool searches is
+    emitted only once, enriched with all configured pain/tool terms it contains.
     """
 
     if lookback_hours <= 0:
@@ -95,6 +98,17 @@ def search_reddit_by_keywords(
                 continue
 
             raw_post = submission_to_raw_post(submission)
+
+            # First verify the exact tool used by this server-side query.
+            if match_post(
+                raw_post,
+                pain_terms,
+                [tool],
+                case_sensitive=case_sensitive,
+            ) is None:
+                continue
+
+            # Then enrich with every configured pain/tool term present in the post.
             matched_post = match_post(
                 raw_post,
                 pain_terms,
