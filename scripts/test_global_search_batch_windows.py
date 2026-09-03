@@ -1,4 +1,4 @@
-"""Diagnostic: measure recency coverage of batched global pain+tool searches."""
+"""Diagnostic: measure refined global keyword-search coverage for a 3-hour cadence."""
 
 from __future__ import annotations
 
@@ -12,34 +12,63 @@ from reddit_scraper.matcher import match_post
 from reddit_scraper.scraper import create_reddit_client, submission_to_raw_post
 
 CONFIG_PATH = Path("config/config.yaml")
-BATCH_SIZE = 5
 SEARCH_LIMIT = 250
 
+# The previous seven-query diagnostic showed three batches with relatively tight
+# coverage (<6h). Split those while leaving the comfortably wider batches intact.
+QUERY_GROUPS = [
+    ["blocked", "blocker", "blockers"],
+    ["waiting on", "dependencies"],
+    ["other team", "another team", "cross-team", "handoff", "bottleneck"],
+    ["stuck", "delays", "ownership"],
+    ["who owns", "no owner"],
+    ["accountable", "assignee"],
+    ["decisions", "decision log", "meeting notes"],
+    ["rationale", "reasoning", "reconstruct"],
+    ["source of truth", "stale"],
+    ["status reporting", "project health", "visibility", "out of sync", "follow-up"],
+    ["chasing", "action items", "scope change", "scattered", "fragmented"],
+]
 
-def iso(ts: float) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+def dt(ts: float) -> datetime:
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+def fmt(ts: float) -> str:
+    return dt(ts).isoformat()
+
+
+def hours_between(newest: float, oldest: float) -> float:
+    return (newest - oldest) / 3600.0
 
 
 def main() -> None:
     with CONFIG_PATH.open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
 
-    pain_keywords = list(config["pain_keywords"])
+    all_pains = list(config["pain_keywords"])
     tools = list(config["tools"])
     case_sensitive = bool(config.get("matching", {}).get("case_sensitive", False))
     reddit = create_reddit_client()
 
+    configured = [term for group in QUERY_GROUPS for term in group]
+    if sorted(configured) != sorted(all_pains):
+        raise RuntimeError("QUERY_GROUPS must contain every configured pain keyword exactly once")
+
     all_raw: dict[str, object] = {}
     all_exact: dict[str, dict[str, object]] = {}
+    summed_raw = 0
+    summed_exact = 0
 
-    print(f"Pain keywords: {len(pain_keywords)}")
-    print(f"Tools: {len(tools)}")
-    print(f"Batch size: {BATCH_SIZE}")
+    print(f"Pain keywords covered: {len(configured)}")
+    print(f"Tools per query: {len(tools)}")
+    print(f"Queries: {len(QUERY_GROUPS)}")
     print(f"Per-query limit: {SEARCH_LIMIT}")
+    print("Local validation: at least one configured pain + at least one configured tool")
 
-    for index in range(0, len(pain_keywords), BATCH_SIZE):
-        pain_batch = pain_keywords[index:index + BATCH_SIZE]
-        query = build_global_search_query(pain_batch, tools)
+    for query_num, pain_group in enumerate(QUERY_GROUPS, start=1):
+        query = build_global_search_query(pain_group, tools)
         submissions = list(
             reddit.subreddit("all").search(
                 query,
@@ -50,13 +79,16 @@ def main() -> None:
             )
         )
 
-        exact = []
+        exact: list[dict[str, object]] = []
         for submission in submissions:
-            all_raw[str(submission.id)] = submission
+            post_id = str(submission.id)
+            all_raw[post_id] = submission
             raw_post = submission_to_raw_post(submission)
+            # Validate against the FULL configured vocabularies. Reddit search is
+            # only candidate discovery and may return fuzzy/nonliteral results.
             matched = match_post(
                 raw_post,
-                pain_batch,
+                all_pains,
                 tools,
                 case_sensitive=case_sensitive,
             )
@@ -64,41 +96,54 @@ def main() -> None:
                 exact.append(matched)
                 all_exact[str(matched["post_id"])] = matched
 
-        batch_num = index // BATCH_SIZE + 1
+        summed_raw += len(submissions)
+        summed_exact += len(exact)
+
         if submissions:
             newest = max(float(item.created_utc) for item in submissions)
             oldest = min(float(item.created_utc) for item in submissions)
-            raw_window = f"newest={iso(newest)} | oldest={iso(oldest)}"
+            raw_window_hours = hours_between(newest, oldest)
+            raw_window = (
+                f"raw_newest={fmt(newest)} | raw_oldest={fmt(oldest)} | "
+                f"raw_window_hours={raw_window_hours:.2f}"
+            )
         else:
-            raw_window = "newest=None | oldest=None"
+            raw_window = "raw_newest=None | raw_oldest=None | raw_window_hours=0.00"
 
         if exact:
             exact_newest = max(float(item["created_utc"]) for item in exact)
             exact_oldest = min(float(item["created_utc"]) for item in exact)
-            exact_window = f"exact_newest={iso(exact_newest)} | exact_oldest={iso(exact_oldest)}"
+            exact_window_hours = hours_between(exact_newest, exact_oldest)
+            exact_window = (
+                f"exact_newest={fmt(exact_newest)} | exact_oldest={fmt(exact_oldest)} | "
+                f"exact_window_hours={exact_window_hours:.2f}"
+            )
         else:
-            exact_window = "exact_newest=None | exact_oldest=None"
+            exact_window = "exact_newest=None | exact_oldest=None | exact_window_hours=0.00"
 
+        precision = (len(exact) / len(submissions) * 100.0) if submissions else 0.0
         print(
-            f"BATCH {batch_num} | pains={pain_batch} | raw={len(submissions)} | "
-            f"exact={len(exact)} | {raw_window} | {exact_window}"
+            f"QUERY {query_num:02d} | pains={pain_group} | raw={len(submissions)} | "
+            f"exact={len(exact)} | exact_pct={precision:.1f}% | {raw_window} | {exact_window}"
         )
 
-    print("\nOVERALL DISTINCT RESULTS")
-    print(f"Raw distinct posts: {len(all_raw)}")
-    print(f"Exact distinct pain+tool matches: {len(all_exact)}")
+    print("\nTOTALS")
+    print(f"Summed raw results across queries: {summed_raw}")
+    print(f"Distinct raw posts after cross-query dedupe: {len(all_raw)}")
+    print(f"Summed exact matches across queries: {summed_exact}")
+    print(f"Distinct exact pain+tool matches after cross-query dedupe: {len(all_exact)}")
 
     if all_raw:
         newest = max(float(item.created_utc) for item in all_raw.values())
         oldest = min(float(item.created_utc) for item in all_raw.values())
-        print(f"Overall raw newest: {iso(newest)}")
-        print(f"Overall raw oldest: {iso(oldest)}")
+        print(f"Overall raw newest: {fmt(newest)}")
+        print(f"Overall raw oldest: {fmt(oldest)}")
 
     if all_exact:
-        exact_newest = max(float(item["created_utc"]) for item in all_exact.values())
-        exact_oldest = min(float(item["created_utc"]) for item in all_exact.values())
-        print(f"Overall exact newest: {iso(exact_newest)}")
-        print(f"Overall exact oldest: {iso(exact_oldest)}")
+        newest = max(float(item["created_utc"]) for item in all_exact.values())
+        oldest = min(float(item["created_utc"]) for item in all_exact.values())
+        print(f"Overall exact newest: {fmt(newest)}")
+        print(f"Overall exact oldest: {fmt(oldest)}")
 
 
 if __name__ == "__main__":
