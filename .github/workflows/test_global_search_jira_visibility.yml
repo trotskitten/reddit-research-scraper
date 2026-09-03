@@ -2,10 +2,6 @@ name: Test Global Search Jira Visibility
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "scripts/test_global_search_jira_visibility.py"
-      - ".github/workflows/test_global_search_jira_visibility.yml"
 
 permissions:
   contents: read
