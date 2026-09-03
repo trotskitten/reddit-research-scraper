@@ -2,6 +2,10 @@ name: Test Global Search Jira Visibility
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "scripts/test_global_search_jira_visibility.py"
+      - ".github/workflows/test_global_search_jira_visibility.yml"
 
 permissions:
   contents: read
@@ -23,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Test visibility AND jira across Reddit
+      - name: Test 250 newest visibility AND jira results
         env:
           PYTHONPATH: src
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
