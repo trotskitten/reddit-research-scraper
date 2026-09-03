@@ -1,0 +1,35 @@
+name: Test Global Search Batch Windows
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/test_global_search_batch_windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-search:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Measure batched global search windows
+        env:
+          PYTHONPATH: src
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+        run: python scripts/test_global_search_batch_windows.py
