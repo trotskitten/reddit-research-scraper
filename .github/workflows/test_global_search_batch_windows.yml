@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Measure batched global search windows
+      - name: Measure final refined global search windows
         env:
           PYTHONPATH: src
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
