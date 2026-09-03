@@ -73,7 +73,8 @@ def run_pipeline(
 
     When ``dry_run`` is true, the real Reddit and Drive reads still happen, but
     the pipeline never constructs replacement dataset bytes and never calls the
-    Drive upload function. Unique candidates are logged for inspection instead.
+    Drive upload function. Unique candidates and their matcher evidence are
+    logged for inspection instead.
     """
 
     config = load_config(config_path)
@@ -108,11 +109,20 @@ def run_pipeline(
     uploaded = False
     if dry_run:
         LOGGER.info("DRY RUN: Drive writes are disabled")
+        matched_by_id = {
+            str(post.get("post_id") or ""): post
+            for post in matched_posts
+            if post.get("post_id")
+        }
         for post in unique_posts:
+            post_id = str(post.get("id") or "")
+            match_evidence = matched_by_id.get(post_id, {})
             LOGGER.info(
-                "DRY RUN candidate: r/%s | id=%s | %s",
+                "DRY RUN candidate: r/%s | id=%s | pain=%s | tools=%s | %s",
                 post.get("subreddit", ""),
-                post.get("id", ""),
+                post_id,
+                match_evidence.get("matched_pain_keywords", []),
+                match_evidence.get("matched_tools", []),
                 post.get("title", ""),
             )
     elif unique_posts:
