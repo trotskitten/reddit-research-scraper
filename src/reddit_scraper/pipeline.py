@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from reddit_scraper.scraper import create_reddit_client, scrape_posts
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path("config/config.yaml")
+VALID_STREAMS = {"both", "curated", "global"}
 
 
 @dataclass(frozen=True)
@@ -89,23 +91,25 @@ def run_pipeline(
     config_path: str | Path = DEFAULT_CONFIG_PATH,
     *,
     dry_run: bool = False,
+    stream: str = "both",
 ) -> PipelineResult:
-    """Run one complete Reddit discovery/deduplicate/store cycle.
+    """Run one Reddit discovery/deduplicate/store cycle.
 
-    There are two independent Reddit retrieval streams:
+    ``stream`` controls which independent retrieval stream runs:
 
-    1. Curated subreddit stream: every post from the configured subreddits in
-       the subreddit lookback window is accepted without keyword filtering.
-    2. Global search stream: r/all is searched using the configured pain + tool
-       vocabulary and every returned post is locally verified to contain at
-       least one pain term and at least one tool term within its own lookback.
+    - ``curated``: every recent post from configured subreddits, with no keyword filter.
+    - ``global``: r/all keyword search, locally requiring at least one pain + one tool.
+    - ``both``: run and merge both streams for diagnostics/manual runs.
 
-    The two streams are merged before cleaning and deduplication against a fresh
-    Google Drive dataset snapshot.
-
-    When ``dry_run`` is true, all real reads still happen but the Drive write
-    path is never called.
+    Every mode deduplicates against a fresh Google Drive dataset snapshot before
+    writing. When ``dry_run`` is true, all real reads still happen but the Drive
+    write path is never called.
     """
+
+    if stream not in VALID_STREAMS:
+        raise ValueError(
+            f"Invalid stream {stream!r}; expected one of {sorted(VALID_STREAMS)}"
+        )
 
     config = load_config(config_path)
 
@@ -120,19 +124,23 @@ def run_pipeline(
         config["reddit"]["global_search_lookback_hours"]
     )
 
-    subreddit_posts = scrape_posts(
-        reddit_client,
-        config["subreddits"],
-        subreddit_lookback_hours,
-    )
-    LOGGER.info(
-        "Curated subreddit scrape retained all %d recent posts without keyword filtering",
-        len(subreddit_posts),
-    )
+    if stream in {"both", "curated"}:
+        subreddit_posts = scrape_posts(
+            reddit_client,
+            config["subreddits"],
+            subreddit_lookback_hours,
+        )
+        LOGGER.info(
+            "Curated subreddit scrape retained all %d recent posts without keyword filtering",
+            len(subreddit_posts),
+        )
+    else:
+        subreddit_posts = []
+        LOGGER.info("Curated subreddit stream skipped")
 
     matching_config = config["matching"]
     global_search_config = config["global_search"]
-    if bool(global_search_config.get("enabled", True)):
+    if stream in {"both", "global"} and bool(global_search_config.get("enabled", True)):
         global_search_posts = search_reddit_by_keywords(
             reddit_client,
             config["pain_keywords"],
@@ -140,13 +148,16 @@ def run_pipeline(
             global_search_lookback_hours,
             case_sensitive=bool(matching_config.get("case_sensitive", False)),
         )
+        LOGGER.info(
+            "Global Reddit keyword search retained %d pain+tool posts",
+            len(global_search_posts),
+        )
     else:
         global_search_posts = []
-
-    LOGGER.info(
-        "Global Reddit keyword search retained %d pain+tool posts",
-        len(global_search_posts),
-    )
+        if stream == "curated":
+            LOGGER.info("Global Reddit keyword stream skipped")
+        else:
+            LOGGER.info("Global Reddit keyword search disabled by configuration")
 
     candidate_posts = subreddit_posts + global_search_posts
     cleaned_posts = clean_posts(candidate_posts)
@@ -206,15 +217,25 @@ def run_pipeline(
 
 
 def main() -> None:
-    """CLI entry point used by the live GitHub Actions pipeline."""
+    """CLI entry point used by GitHub Actions pipelines."""
+
+    parser = argparse.ArgumentParser(description="Run the Reddit research pipeline")
+    parser.add_argument(
+        "--stream",
+        choices=sorted(VALID_STREAMS),
+        default="both",
+        help="Retrieval stream to run (default: both)",
+    )
+    args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    result = run_pipeline()
+    result = run_pipeline(stream=args.stream)
     print(
         "Pipeline complete: "
+        f"stream={args.stream}, "
         f"existing={result.existing_rows}, "
         f"subreddits={result.subreddit_posts}, "
         f"global_search={result.global_search_posts}, "
