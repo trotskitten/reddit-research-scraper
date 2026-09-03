@@ -8,7 +8,8 @@ def write_config(path: Path) -> None:
     path.write_text(
         """
 reddit:
-  lookback_hours: 6
+  subreddit_lookback_hours: 13
+  global_search_lookback_hours: 6
 subreddits:
   - projectmanagement
 pain_keywords:
@@ -42,21 +43,26 @@ def test_pipeline_merges_unfiltered_subreddit_posts_with_global_search(tmp_path,
     unique_posts = [{"id": "c", "selftext": "three"}]
     uploads = []
     clean_inputs = []
+    subreddit_calls = []
+    global_calls = []
 
     monkeypatch.setattr(pipeline, "create_drive_service", lambda: "drive")
     monkeypatch.setattr(pipeline, "get_dataset_file_id", lambda: "file-id")
     monkeypatch.setattr(pipeline, "download_dataset", lambda service, file_id: snapshot)
     monkeypatch.setattr(pipeline, "create_reddit_client", lambda: "reddit")
-    monkeypatch.setattr(
-        pipeline,
-        "scrape_posts",
-        lambda reddit, subreddits, lookback_hours: subreddit_posts,
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "search_reddit_by_keywords",
-        lambda reddit, pain_keywords, tools, lookback_hours, case_sensitive=False: global_posts,
-    )
+
+    def fake_scrape(reddit, subreddits, lookback_hours):
+        subreddit_calls.append((reddit, list(subreddits), lookback_hours))
+        return subreddit_posts
+
+    def fake_global(reddit, pain_keywords, tools, lookback_hours, case_sensitive=False):
+        global_calls.append(
+            (reddit, list(pain_keywords), list(tools), lookback_hours, case_sensitive)
+        )
+        return global_posts
+
+    monkeypatch.setattr(pipeline, "scrape_posts", fake_scrape)
+    monkeypatch.setattr(pipeline, "search_reddit_by_keywords", fake_global)
 
     def fake_clean(posts):
         clean_inputs.append(list(posts))
@@ -81,6 +87,8 @@ def test_pipeline_merges_unfiltered_subreddit_posts_with_global_search(tmp_path,
 
     result = pipeline.run_pipeline(config_path)
 
+    assert subreddit_calls == [("reddit", ["projectmanagement"], 13)]
+    assert global_calls == [("reddit", ["blocked"], ["jira"], 6, False)]
     assert clean_inputs == [subreddit_posts + global_posts]
     assert result.existing_rows == 1
     assert result.subreddit_posts == 2
