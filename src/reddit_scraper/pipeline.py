@@ -60,13 +60,20 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
     return config
 
 
-def run_pipeline(config_path: str | Path = DEFAULT_CONFIG_PATH) -> PipelineResult:
+def run_pipeline(
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+    *,
+    dry_run: bool = False,
+) -> PipelineResult:
     """Run one complete scrape/filter/deduplicate/store cycle.
 
     The Drive dataset is downloaded before scraping so the deduplication stage
     compares candidates against a fresh source-of-truth snapshot from the start
-    of the run. The Drive file is only uploaded when at least one unique post
-    survives all filters.
+    of the run.
+
+    When ``dry_run`` is true, the real Reddit and Drive reads still happen, but
+    the pipeline never constructs replacement dataset bytes and never calls the
+    Drive upload function. Unique candidates are logged for inspection instead.
     """
 
     config = load_config(config_path)
@@ -99,7 +106,16 @@ def run_pipeline(config_path: str | Path = DEFAULT_CONFIG_PATH) -> PipelineResul
     LOGGER.info("Retained %d unique posts after deduplication", len(unique_posts))
 
     uploaded = False
-    if unique_posts:
+    if dry_run:
+        LOGGER.info("DRY RUN: Drive writes are disabled")
+        for post in unique_posts:
+            LOGGER.info(
+                "DRY RUN candidate: r/%s | id=%s | %s",
+                post.get("subreddit", ""),
+                post.get("id", ""),
+                post.get("title", ""),
+            )
+    elif unique_posts:
         updated_bytes = append_rows_to_csv_bytes(snapshot.raw_bytes, unique_posts)
         upload_dataset(drive_service, dataset_file_id, updated_bytes)
         uploaded = True
@@ -117,7 +133,7 @@ def run_pipeline(config_path: str | Path = DEFAULT_CONFIG_PATH) -> PipelineResul
 
 
 def main() -> None:
-    """CLI entry point used by GitHub Actions."""
+    """CLI entry point used by the live GitHub Actions pipeline."""
 
     logging.basicConfig(
         level=logging.INFO,
