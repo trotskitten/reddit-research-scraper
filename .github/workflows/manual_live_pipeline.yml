@@ -1,0 +1,63 @@
+name: Manual Live Reddit Pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/manual_live_pipeline.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reddit-research-live-write
+  cancel-in-progress: false
+
+jobs:
+  live-write:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run live pipeline
+        env:
+          PYTHONPATH: src
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
+        run: python -m reddit_scraper.pipeline
+
+      - name: Verify Drive dataset after write
+        env:
+          PYTHONPATH: src
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
+        run: |
+          python - <<'PY'
+          from reddit_scraper.drive_storage import create_drive_service, download_dataset, get_dataset_file_id
+
+          service = create_drive_service()
+          file_id = get_dataset_file_id()
+          snapshot = download_dataset(service, file_id)
+          ids = [str(row.get("id", "")) for row in snapshot.rows]
+          columns = list(snapshot.rows[0].keys()) if snapshot.rows else []
+          duplicate_ids = len(ids) - len(set(ids))
+
+          print(f"VERIFY file_id={file_id}")
+          print(f"VERIFY rows={len(snapshot.rows)}")
+          print(f"VERIFY columns={columns}")
+          print(f"VERIFY duplicate_ids={duplicate_ids}")
+          PY
