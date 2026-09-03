@@ -2,6 +2,9 @@ name: Test Global Search Batch Windows
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/test_global_search_batch_windows.yml"
 
 permissions:
   contents: read
