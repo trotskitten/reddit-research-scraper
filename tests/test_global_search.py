@@ -22,13 +22,16 @@ class FakeSubmission:
 
 
 class FakeAll:
-    def __init__(self, results):
-        self.results = results
+    def __init__(self, results_by_call):
+        self.results_by_call = list(results_by_call)
         self.calls = []
 
     def search(self, query, **kwargs):
+        call_index = len(self.calls)
         self.calls.append((query, kwargs))
-        return iter(self.results)
+        if call_index >= len(self.results_by_call):
+            return iter([])
+        return iter(self.results_by_call[call_index])
 
 
 class FakeReddit:
@@ -51,7 +54,7 @@ def test_build_global_search_query_groups_pains_and_tools():
     assert query == '("blocked" OR "waiting on") AND ("jira" OR "slack")'
 
 
-def test_global_search_uses_one_boolean_query_and_locally_verifies_matches():
+def test_global_search_batches_queries_and_locally_verifies_full_vocab():
     now = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
     now_ts = now.timestamp()
 
@@ -87,7 +90,10 @@ def test_global_search_uses_one_boolean_query_and_locally_verifies_matches():
     )
 
     all_subreddit = FakeAll(
-        [relevant, no_pain, old_relevant, second_relevant, duplicate_relevant]
+        [
+            [relevant, no_pain, old_relevant, duplicate_relevant],
+            [second_relevant, duplicate_relevant],
+        ]
     )
     reddit = FakeReddit(all_subreddit)
 
@@ -97,25 +103,55 @@ def test_global_search_uses_one_boolean_query_and_locally_verifies_matches():
         ["jira", "slack"],
         6,
         now_utc=now,
+        batch_size=2,
     )
 
     assert reddit.requested == ["all"]
-    assert len(all_subreddit.calls) == 1
+    assert len(all_subreddit.calls) == 2
 
-    query, kwargs = all_subreddit.calls[0]
-    assert query == (
-        '("blocked" OR "waiting on" OR "scattered") '
+    first_query, first_kwargs = all_subreddit.calls[0]
+    second_query, second_kwargs = all_subreddit.calls[1]
+
+    assert first_query == (
+        '("blocked" OR "waiting on") '
         'AND ("jira" OR "slack")'
     )
-    assert kwargs["sort"] == "new"
-    assert kwargs["syntax"] == "lucene"
-    assert kwargs["time_filter"] == "day"
+    assert second_query == '("scattered") AND ("jira" OR "slack")'
+
+    for kwargs in (first_kwargs, second_kwargs):
+        assert kwargs["sort"] == "new"
+        assert kwargs["syntax"] == "lucene"
+        assert kwargs["time_filter"] == "day"
+        assert kwargs["limit"] == 250
 
     assert [post["post_id"] for post in results] == ["a", "c"]
     assert results[0]["matched_pain_keywords"] == ["blocked"]
     assert results[0]["matched_tools"] == ["jira"]
     assert results[1]["matched_pain_keywords"] == ["waiting on", "scattered"]
     assert results[1]["matched_tools"] == ["slack"]
+
+
+def test_current_35_pain_terms_produce_seven_default_queries():
+    now = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+    pains = [f"pain-{index}" for index in range(35)]
+    all_subreddit = FakeAll([[] for _ in range(7)])
+    reddit = FakeReddit(all_subreddit)
+
+    results = search_reddit_by_keywords(
+        reddit,
+        pains,
+        ["jira"],
+        6,
+        now_utc=now,
+    )
+
+    assert results == []
+    assert len(all_subreddit.calls) == 7
+    assert all_subreddit.calls[0][0].startswith('("pain-0" OR "pain-1"')
+    assert all_subreddit.calls[-1][0] == (
+        '("pain-30" OR "pain-31" OR "pain-32" OR "pain-33" OR "pain-34") '
+        'AND ("jira")'
+    )
 
 
 def test_global_search_requires_nonempty_pain_and_tool_groups():
