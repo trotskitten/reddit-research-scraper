@@ -1,7 +1,13 @@
 # Reddit scraper configuration
 
 reddit:
-  lookback_hours: 6
+  # Curated subreddits will eventually run every 12 hours. The 13-hour
+  # lookback creates a one-hour overlap between runs.
+  subreddit_lookback_hours: 13
+
+  # Global keyword search will eventually run every 3 hours. The 6-hour
+  # lookback intentionally overlaps consecutive runs.
+  global_search_lookback_hours: 6
 
 # Every recent post from these curated communities is collected.
 # No pain/tool keyword match is required for this stream.
