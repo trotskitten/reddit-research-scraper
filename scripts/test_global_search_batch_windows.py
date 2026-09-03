@@ -14,17 +14,21 @@ from reddit_scraper.scraper import create_reddit_client, submission_to_raw_post
 CONFIG_PATH = Path("config/config.yaml")
 SEARCH_LIMIT = 250
 
-# The previous seven-query diagnostic showed three batches with relatively tight
-# coverage (<6h). Split those while leaving the comfortably wider batches intact.
+# Refined from the previous diagnostics so every query should cover materially
+# more than the intended 3-hour schedule interval.
 QUERY_GROUPS = [
     ["blocked", "blocker", "blockers"],
     ["waiting on", "dependencies"],
     ["other team", "another team", "cross-team", "handoff", "bottleneck"],
-    ["stuck", "delays", "ownership"],
+    ["stuck", "delays"],
+    ["ownership"],
     ["who owns", "no owner"],
-    ["accountable", "assignee"],
-    ["decisions", "decision log", "meeting notes"],
-    ["rationale", "reasoning", "reconstruct"],
+    ["accountable"],
+    ["assignee"],
+    ["decisions"],
+    ["decision log", "meeting notes"],
+    ["rationale", "reasoning"],
+    ["reconstruct"],
     ["source of truth", "stale"],
     ["status reporting", "project health", "visibility", "out of sync", "follow-up"],
     ["chasing", "action items", "scope change", "scattered", "fragmented"],
@@ -84,8 +88,6 @@ def main() -> None:
             post_id = str(submission.id)
             all_raw[post_id] = submission
             raw_post = submission_to_raw_post(submission)
-            # Validate against the FULL configured vocabularies. Reddit search is
-            # only candidate discovery and may return fuzzy/nonliteral results.
             matched = match_post(
                 raw_post,
                 all_pains,
