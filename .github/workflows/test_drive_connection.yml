@@ -1,0 +1,34 @@
+name: Test Google Drive Connection
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/test_drive_connection.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test-drive-connection:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Test Google Drive dataset connection
+        env:
+          PYTHONPATH: src
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
+        run: python scripts/test_drive_connection.py
