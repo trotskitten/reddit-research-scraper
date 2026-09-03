@@ -3,6 +3,8 @@
 reddit:
   lookback_hours: 6
 
+# Every recent post from these curated communities is collected.
+# No pain/tool keyword match is required for this stream.
 subreddits:
   - sysadmin
   - SaaS
@@ -35,6 +37,7 @@ subreddits:
   - Asana
   - scrum
 
+# These vocabularies are used only for the separate global r/all search stream.
 pain_keywords:
   - blocked
   - blocker
@@ -85,6 +88,9 @@ tools:
   - teams
   - spreadsheet
   - email
+
+global_search:
+  enabled: true
 
 matching:
   case_sensitive: false
