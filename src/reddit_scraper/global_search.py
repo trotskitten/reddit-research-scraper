@@ -27,22 +27,23 @@ def _quote_search_term(term: str) -> str:
     return f'"{escaped}"'
 
 
-def build_tool_search_query(pain_keywords: Iterable[str], tool: str) -> str:
-    """Build one global-search query for a tool plus any configured pain term.
-
-    We issue one Reddit search per tool rather than one search for every
-    pain×tool pair. The exact pain+tool rule is verified locally on every result,
-    so Reddit search is used for candidate discovery rather than final matching.
-    """
+def build_global_search_query(
+    pain_keywords: Iterable[str],
+    tools: Iterable[str],
+) -> str:
+    """Build one Reddit query: (pain1 OR pain2...) AND (tool1 OR tool2...)."""
 
     pain_terms = [term for term in pain_keywords if term]
+    tool_terms = [term for term in tools if term]
+
     if not pain_terms:
         raise ValueError("At least one pain keyword is required")
-    if not tool:
-        raise ValueError("tool must not be empty")
+    if not tool_terms:
+        raise ValueError("At least one tool keyword is required")
 
     pain_expression = " OR ".join(_quote_search_term(term) for term in pain_terms)
-    return f"({pain_expression}) AND {_quote_search_term(tool)}"
+    tool_expression = " OR ".join(_quote_search_term(term) for term in tool_terms)
+    return f"({pain_expression}) AND ({tool_expression})"
 
 
 def search_reddit_by_keywords(
@@ -56,15 +57,14 @@ def search_reddit_by_keywords(
 ) -> list[dict[str, object]]:
     """Search all Reddit for recent posts satisfying pain + tool matching.
 
-    One server-side search is issued per configured tool using r/all, sorted by
-    newest first and restricted by Reddit's one-day time filter. Results are then
-    restricted to the exact configured lookback window and locally validated by
-    the same whole-word/phrase matcher used elsewhere in the project.
+    One server-side r/all search uses the full Boolean expression:
 
-    A result from a tool-specific search must locally contain that same tool plus
-    at least one pain term. This protects the pipeline from fuzzy or imperfect
-    server-side search results. A post returned by multiple tool searches is
-    emitted only once, enriched with all configured pain/tool terms it contains.
+        (pain1 OR pain2 OR ...) AND (tool1 OR tool2 OR ...)
+
+    Reddit search is used only for discovery. Every returned post is restricted
+    to the configured lookback window and then locally verified with the same
+    whole-word/phrase matcher used elsewhere in the project. This keeps the final
+    qualification rule deterministic even if Reddit search behaves fuzzily.
     """
 
     if lookback_hours <= 0:
@@ -76,57 +76,44 @@ def search_reddit_by_keywords(
 
     pain_terms = list(pain_keywords)
     tool_terms = list(tools)
+    query = build_global_search_query(pain_terms, tool_terms)
     cutoff_timestamp = (
         current_time.astimezone(timezone.utc) - timedelta(hours=lookback_hours)
     ).timestamp()
 
     all_subreddits = reddit.subreddit("all")
-    matched_by_id: dict[str, dict[str, object]] = {}
+    matched_posts: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
 
-    for tool in tool_terms:
-        query = build_tool_search_query(pain_terms, tool)
-        tool_matches = 0
+    for submission in all_subreddits.search(
+        query,
+        sort="new",
+        syntax="lucene",
+        time_filter="day",
+        limit=None,
+    ):
+        if float(submission.created_utc) < cutoff_timestamp:
+            continue
 
-        for submission in all_subreddits.search(
-            query,
-            sort="new",
-            syntax="lucene",
-            time_filter="day",
-            limit=None,
-        ):
-            if float(submission.created_utc) < cutoff_timestamp:
-                continue
-
-            raw_post = submission_to_raw_post(submission)
-
-            # First verify the exact tool used by this server-side query.
-            if match_post(
-                raw_post,
-                pain_terms,
-                [tool],
-                case_sensitive=case_sensitive,
-            ) is None:
-                continue
-
-            # Then enrich with every configured pain/tool term present in the post.
-            matched_post = match_post(
-                raw_post,
-                pain_terms,
-                tool_terms,
-                case_sensitive=case_sensitive,
-            )
-            if matched_post is None:
-                continue
-
-            post_id = str(matched_post["post_id"])
-            if post_id not in matched_by_id:
-                matched_by_id[post_id] = matched_post
-                tool_matches += 1
-
-        LOGGER.info(
-            "Global Reddit search for tool %r found %d new pain+tool matches",
-            tool,
-            tool_matches,
+        raw_post = submission_to_raw_post(submission)
+        matched_post = match_post(
+            raw_post,
+            pain_terms,
+            tool_terms,
+            case_sensitive=case_sensitive,
         )
+        if matched_post is None:
+            continue
 
-    return list(matched_by_id.values())
+        post_id = str(matched_post["post_id"])
+        if post_id in seen_ids:
+            continue
+
+        seen_ids.add(post_id)
+        matched_posts.append(matched_post)
+
+    LOGGER.info(
+        "Global Reddit Boolean search found %d pain+tool matches",
+        len(matched_posts),
+    )
+    return matched_posts
