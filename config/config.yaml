@@ -94,10 +94,10 @@ matching:
   require_tool_keyword: true
   search_fields:
     - title
-    - body
+    - text
 
 deduplication:
   order:
-    - post_id
-    - text
+    - id
+    - selftext
   exact_text_match: true
