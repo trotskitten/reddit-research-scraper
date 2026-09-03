@@ -1,68 +1,75 @@
-"""Live diagnostic for the global Reddit search path.
+"""Live diagnostic for Reddit search: visibility AND jira.
 
-Tests exactly: "visibility" AND "jira" across r/all.
-No Google Drive access and no writes.
+Requests up to 250 newest search results with no age cutoff, then checks the
+current title + body for the literal words "visibility" and "jira" using the
+same whole-word matcher semantics as the pipeline. No Google Drive access.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from reddit_scraper.global_search import build_global_search_query
-from reddit_scraper.matcher import match_post
+from reddit_scraper.matcher import term_matches
 from reddit_scraper.scraper import create_reddit_client, submission_to_raw_post
+
+SEARCH_LIMIT = 250
 
 
 def main() -> None:
     reddit = create_reddit_client()
-    pain_terms = ["visibility"]
-    tool_terms = ["jira"]
-    query = build_global_search_query(pain_terms, tool_terms)
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=6)
+    query = build_global_search_query(["visibility"], ["jira"])
 
     print(f"Query: {query}")
+    print(f"Requested limit: {SEARCH_LIMIT}")
 
-    raw_count = 0
-    recent_count = 0
-    local_match_count = 0
-
-    for submission in reddit.subreddit("all").search(
-        query,
-        sort="new",
-        syntax="lucene",
-        time_filter="day",
-        limit=100,
-    ):
-        raw_count += 1
-        created = datetime.fromtimestamp(float(submission.created_utc), tz=timezone.utc)
-        if created < cutoff:
-            continue
-
-        recent_count += 1
-        raw_post = submission_to_raw_post(submission)
-        matched = match_post(raw_post, pain_terms, tool_terms)
-        if matched is not None:
-            local_match_count += 1
-            print(
-                "MATCH | "
-                f"r/{raw_post['subreddit']} | "
-                f"id={raw_post['post_id']} | "
-                f"created={created.isoformat()} | "
-                f"title={raw_post['title']}"
-            )
-        else:
-            print(
-                "REJECTED LOCALLY | "
-                f"r/{raw_post['subreddit']} | "
-                f"id={raw_post['post_id']} | "
-                f"created={created.isoformat()} | "
-                f"title={raw_post['title']}"
-            )
-
-    print(
-        "Summary: "
-        f"raw_search_results={raw_count}, "
-        f"within_6h={recent_count}, "
-        f"local_matches={local_match_count}"
+    submissions = list(
+        reddit.subreddit("all").search(
+            query,
+            sort="new",
+            syntax="lucene",
+            time_filter="all",
+            limit=SEARCH_LIMIT,
+        )
     )
+
+    both = []
+    only_jira = []
+    only_visibility = []
+    neither = []
+
+    for submission in submissions:
+        post = submission_to_raw_post(submission)
+        search_text = f"{post['title']}\n{post['text']}"
+        has_jira = term_matches(search_text, "jira")
+        has_visibility = term_matches(search_text, "visibility")
+
+        if has_jira and has_visibility:
+            both.append(post)
+        elif has_jira:
+            only_jira.append(post)
+        elif has_visibility:
+            only_visibility.append(post)
+        else:
+            neither.append(post)
+
+    print(f"Raw Reddit search results: {len(submissions)}")
+    print(f"Contains BOTH jira + visibility: {len(both)}")
+    print(f"Contains jira only: {len(only_jira)}")
+    print(f"Contains visibility only: {len(only_visibility)}")
+    print(f"Contains neither: {len(neither)}")
+
+    if submissions:
+        newest = datetime.fromtimestamp(float(submissions[0].created_utc), tz=timezone.utc)
+        oldest = datetime.fromtimestamp(float(submissions[-1].created_utc), tz=timezone.utc)
+        print(f"Newest returned result: {newest.isoformat()}")
+        print(f"Oldest returned result: {oldest.isoformat()}")
+
+    print("\nPosts that actually contain both words:")
+    for post in both:
+        created = datetime.fromtimestamp(float(post["created_utc"]), tz=timezone.utc)
+        print(
+            f"BOTH | r/{post['subreddit']} | id={post['post_id']} | "
+            f"created={created.isoformat()} | title={post['title']}"
+        )
 
 
 if __name__ == "__main__":
