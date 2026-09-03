@@ -1,0 +1,103 @@
+# Reddit scraper configuration
+
+reddit:
+  lookback_hours: 6
+
+subreddits:
+  - sysadmin
+  - SaaS
+  - Notion
+  - webdev
+  - startups
+  - devops
+  - projectmanagers
+  - ProductManagement
+  - clickup
+  - EngineeringManagers
+  - projectmanagement
+  - ExperiencedDevs
+  - businessanalysis
+  - github
+  - sre
+  - softwaredevelopment
+  - jira
+  - mondaydotcom
+  - ITManagers
+  - changemanagement
+  - trello
+  - Slack
+  - Linear
+  - kanban
+  - ProductOwner
+  - agile
+  - managers
+  - atlassian
+  - Asana
+  - scrum
+
+pain_keywords:
+  - blocked
+  - blocker
+  - blockers
+  - waiting on
+  - dependencies
+  - other team
+  - another team
+  - cross-team
+  - handoff
+  - bottleneck
+  - stuck
+  - delays
+  - who owns
+  - no owner
+  - ownership
+  - accountable
+  - assignee
+  - decisions
+  - decision log
+  - meeting notes
+  - rationale
+  - reasoning
+  - reconstruct
+  - source of truth
+  - stale
+  - status reporting
+  - project health
+  - visibility
+  - out of sync
+  - follow-up
+  - chasing
+  - action items
+  - scope change
+  - scattered
+  - fragmented
+
+tools:
+  - jira
+  - slack
+  - notion
+  - github
+  - confluence
+  - asana
+  - monday
+  - clickup
+  - linear
+  - teams
+  - spreadsheet
+  - email
+
+matching:
+  case_sensitive: false
+  mode: word_or_phrase
+  combine_search_fields: true
+  require_pain_keyword: true
+  require_tool_keyword: true
+  search_fields:
+    - title
+    - body
+
+deduplication:
+  order:
+    - post_id
+    - text
+  exact_text_match: true
