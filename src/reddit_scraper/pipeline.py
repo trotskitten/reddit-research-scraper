@@ -17,7 +17,7 @@ from reddit_scraper.drive_storage import (
     get_dataset_file_id,
     upload_dataset,
 )
-from reddit_scraper.matcher import filter_matching_posts
+from reddit_scraper.global_search import search_reddit_by_keywords
 from reddit_scraper.scraper import create_reddit_client, scrape_posts
 
 LOGGER = logging.getLogger(__name__)
@@ -29,8 +29,9 @@ class PipelineResult:
     """Counts produced by one completed pipeline run."""
 
     existing_rows: int
-    scraped_posts: int
-    matched_posts: int
+    subreddit_posts: int
+    global_search_posts: int
+    combined_candidates: int
     unique_posts: int
     uploaded: bool
 
@@ -45,17 +46,28 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
     if not isinstance(config, dict):
         raise ValueError("Configuration root must be a mapping")
 
-    required_keys = ("reddit", "subreddits", "pain_keywords", "tools", "matching")
+    required_keys = (
+        "reddit",
+        "subreddits",
+        "pain_keywords",
+        "tools",
+        "matching",
+        "global_search",
+    )
     missing = [key for key in required_keys if key not in config]
     if missing:
         raise ValueError(f"Configuration is missing required keys: {missing}")
 
     reddit_config = config["reddit"]
     matching_config = config["matching"]
+    global_search_config = config["global_search"]
+
     if not isinstance(reddit_config, dict) or "lookback_hours" not in reddit_config:
         raise ValueError("Configuration must define reddit.lookback_hours")
     if not isinstance(matching_config, dict):
         raise ValueError("Configuration matching section must be a mapping")
+    if not isinstance(global_search_config, dict):
+        raise ValueError("Configuration global_search section must be a mapping")
 
     return config
 
@@ -65,16 +77,21 @@ def run_pipeline(
     *,
     dry_run: bool = False,
 ) -> PipelineResult:
-    """Run one complete scrape/filter/deduplicate/store cycle.
+    """Run one complete Reddit discovery/deduplicate/store cycle.
 
-    The Drive dataset is downloaded before scraping so the deduplication stage
-    compares candidates against a fresh source-of-truth snapshot from the start
-    of the run.
+    There are two independent Reddit retrieval streams:
 
-    When ``dry_run`` is true, the real Reddit and Drive reads still happen, but
-    the pipeline never constructs replacement dataset bytes and never calls the
-    Drive upload function. Unique candidates and their matcher evidence are
-    logged for inspection instead.
+    1. Curated subreddit stream: every post from the configured subreddits in
+       the lookback window is accepted without keyword filtering.
+    2. Global search stream: r/all is searched using the configured pain + tool
+       vocabulary and every returned post is locally verified to contain at
+       least one pain term and at least one tool term.
+
+    The two streams are merged before cleaning and deduplication against a fresh
+    Google Drive dataset snapshot.
+
+    When ``dry_run`` is true, all real reads still happen but the Drive write
+    path is never called.
     """
 
     config = load_config(config_path)
@@ -85,44 +102,73 @@ def run_pipeline(
     LOGGER.info("Loaded %d existing dataset rows", len(snapshot.rows))
 
     reddit_client = create_reddit_client()
-    reddit_config = config["reddit"]
-    raw_posts = scrape_posts(
+    lookback_hours = int(config["reddit"]["lookback_hours"])
+
+    subreddit_posts = scrape_posts(
         reddit_client,
         config["subreddits"],
-        int(reddit_config["lookback_hours"]),
+        lookback_hours,
     )
-    LOGGER.info("Scraped %d recent Reddit posts", len(raw_posts))
+    LOGGER.info(
+        "Curated subreddit scrape retained all %d recent posts without keyword filtering",
+        len(subreddit_posts),
+    )
 
     matching_config = config["matching"]
-    matched_posts = filter_matching_posts(
-        raw_posts,
-        config["pain_keywords"],
-        config["tools"],
-        case_sensitive=bool(matching_config.get("case_sensitive", False)),
-    )
-    LOGGER.info("Matched %d posts against pain + tool rule", len(matched_posts))
+    global_search_config = config["global_search"]
+    if bool(global_search_config.get("enabled", True)):
+        global_search_posts = search_reddit_by_keywords(
+            reddit_client,
+            config["pain_keywords"],
+            config["tools"],
+            lookback_hours,
+            case_sensitive=bool(matching_config.get("case_sensitive", False)),
+        )
+    else:
+        global_search_posts = []
 
-    cleaned_posts = clean_posts(matched_posts)
+    LOGGER.info(
+        "Global Reddit keyword search retained %d pain+tool posts",
+        len(global_search_posts),
+    )
+
+    candidate_posts = subreddit_posts + global_search_posts
+    cleaned_posts = clean_posts(candidate_posts)
     unique_posts = deduplicate_posts(cleaned_posts, snapshot.rows)
-    LOGGER.info("Retained %d unique posts after deduplication", len(unique_posts))
+    LOGGER.info(
+        "Merged %d candidates and retained %d unique posts after deduplication",
+        len(candidate_posts),
+        len(unique_posts),
+    )
 
     uploaded = False
     if dry_run:
         LOGGER.info("DRY RUN: Drive writes are disabled")
-        matched_by_id = {
-            str(post.get("post_id") or ""): post
-            for post in matched_posts
-            if post.get("post_id")
+
+        curated_ids = {str(post.get("post_id", "")) for post in subreddit_posts}
+        global_by_id = {
+            str(post.get("post_id", "")): post for post in global_search_posts
         }
+
         for post in unique_posts:
-            post_id = str(post.get("id") or "")
-            match_evidence = matched_by_id.get(post_id, {})
+            post_id = str(post.get("id", ""))
+            in_curated = post_id in curated_ids
+            global_match = global_by_id.get(post_id)
+
+            if in_curated and global_match is not None:
+                source = "curated+global"
+            elif in_curated:
+                source = "curated"
+            else:
+                source = "global"
+
             LOGGER.info(
-                "DRY RUN candidate: r/%s | id=%s | pain=%s | tools=%s | %s",
+                "DRY RUN candidate: source=%s | r/%s | id=%s | pain=%s | tools=%s | %s",
+                source,
                 post.get("subreddit", ""),
                 post_id,
-                match_evidence.get("matched_pain_keywords", []),
-                match_evidence.get("matched_tools", []),
+                global_match.get("matched_pain_keywords", []) if global_match else [],
+                global_match.get("matched_tools", []) if global_match else [],
                 post.get("title", ""),
             )
     elif unique_posts:
@@ -135,8 +181,9 @@ def run_pipeline(
 
     return PipelineResult(
         existing_rows=len(snapshot.rows),
-        scraped_posts=len(raw_posts),
-        matched_posts=len(matched_posts),
+        subreddit_posts=len(subreddit_posts),
+        global_search_posts=len(global_search_posts),
+        combined_candidates=len(candidate_posts),
         unique_posts=len(unique_posts),
         uploaded=uploaded,
     )
@@ -153,8 +200,9 @@ def main() -> None:
     print(
         "Pipeline complete: "
         f"existing={result.existing_rows}, "
-        f"scraped={result.scraped_posts}, "
-        f"matched={result.matched_posts}, "
+        f"subreddits={result.subreddit_posts}, "
+        f"global_search={result.global_search_posts}, "
+        f"combined={result.combined_candidates}, "
         f"unique={result.unique_posts}, "
         f"uploaded={result.uploaded}"
     )
