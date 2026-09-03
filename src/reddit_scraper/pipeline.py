@@ -62,8 +62,21 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
     matching_config = config["matching"]
     global_search_config = config["global_search"]
 
-    if not isinstance(reddit_config, dict) or "lookback_hours" not in reddit_config:
-        raise ValueError("Configuration must define reddit.lookback_hours")
+    if not isinstance(reddit_config, dict):
+        raise ValueError("Configuration reddit section must be a mapping")
+
+    required_reddit_keys = (
+        "subreddit_lookback_hours",
+        "global_search_lookback_hours",
+    )
+    missing_reddit = [
+        key for key in required_reddit_keys if key not in reddit_config
+    ]
+    if missing_reddit:
+        raise ValueError(
+            f"Configuration reddit section is missing required keys: {missing_reddit}"
+        )
+
     if not isinstance(matching_config, dict):
         raise ValueError("Configuration matching section must be a mapping")
     if not isinstance(global_search_config, dict):
@@ -82,10 +95,10 @@ def run_pipeline(
     There are two independent Reddit retrieval streams:
 
     1. Curated subreddit stream: every post from the configured subreddits in
-       the lookback window is accepted without keyword filtering.
+       the subreddit lookback window is accepted without keyword filtering.
     2. Global search stream: r/all is searched using the configured pain + tool
        vocabulary and every returned post is locally verified to contain at
-       least one pain term and at least one tool term.
+       least one pain term and at least one tool term within its own lookback.
 
     The two streams are merged before cleaning and deduplication against a fresh
     Google Drive dataset snapshot.
@@ -102,12 +115,15 @@ def run_pipeline(
     LOGGER.info("Loaded %d existing dataset rows", len(snapshot.rows))
 
     reddit_client = create_reddit_client()
-    lookback_hours = int(config["reddit"]["lookback_hours"])
+    subreddit_lookback_hours = int(config["reddit"]["subreddit_lookback_hours"])
+    global_search_lookback_hours = int(
+        config["reddit"]["global_search_lookback_hours"]
+    )
 
     subreddit_posts = scrape_posts(
         reddit_client,
         config["subreddits"],
-        lookback_hours,
+        subreddit_lookback_hours,
     )
     LOGGER.info(
         "Curated subreddit scrape retained all %d recent posts without keyword filtering",
@@ -121,7 +137,7 @@ def run_pipeline(
             reddit_client,
             config["pain_keywords"],
             config["tools"],
-            lookback_hours,
+            global_search_lookback_hours,
             case_sensitive=bool(matching_config.get("case_sensitive", False)),
         )
     else:
