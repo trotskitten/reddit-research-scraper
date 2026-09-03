@@ -2,9 +2,6 @@ name: Test Global Search No Time Limit
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/test_global_search_no_time.yml"
 
 permissions:
   contents: read
