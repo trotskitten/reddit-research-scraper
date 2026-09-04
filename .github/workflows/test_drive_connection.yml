@@ -2,6 +2,9 @@ name: Test Google Drive Connection
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/test_drive_connection.yml"
 
 permissions:
   contents: read
