@@ -1,0 +1,100 @@
+name: Recover Drive revisions 2026-09-13
+
+on:
+  push:
+    branches:
+      - repair-drive-datasets-2026-09-13
+    paths:
+      - '.github/workflows/recover_drive_revisions_2026_09_13.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reddit-research-live-write
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Drive client
+        run: pip install google-api-python-client google-auth
+
+      - name: Download historical Drive revisions
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import io
+          import json
+          import os
+          from pathlib import Path
+
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaIoBaseDownload
+
+          SCOPES = ('https://www.googleapis.com/auth/drive',)
+          credentials = service_account.Credentials.from_service_account_info(
+              json.loads(os.environ['GOOGLE_SERVICE_ACCOUNT_JSON']), scopes=SCOPES
+          )
+          service = build('drive', 'v3', credentials=credentials, cache_discovery=False)
+
+          targets = [
+              (
+                  'dataset_recovered.csv',
+                  '1jcGuOfbc5WfkUYtWuKNDV4Hj5JK0E0Sp',
+                  '0B6Lv6_4fa3s2eTg3dnQxN29JK3BDcWJkWWFCS1ZOcUNVU3pjPQ',
+              ),
+              (
+                  'labeled_posts_recovered.csv',
+                  '1cnoh0Fk2UBBIdormFbdxdFBFVmv4TDck',
+                  '0B6Lv6_4fa3s2NVVTQTF2d2Y5cU5pK3Z4QmNLOEtLTE83RUxjPQ',
+              ),
+          ]
+
+          out_dir = Path('recovered_revisions')
+          out_dir.mkdir(exist_ok=True)
+
+          for filename, file_id, revision_id in targets:
+              try:
+                  service.revisions().update(
+                      fileId=file_id,
+                      revisionId=revision_id,
+                      body={'keepForever': True},
+                  ).execute()
+                  print(f'Pinned revision {revision_id} for {filename}')
+              except Exception as exc:
+                  print(f'Could not pin {filename}: {type(exc).__name__}: {exc}')
+
+              request = service.revisions().get_media(
+                  fileId=file_id,
+                  revisionId=revision_id,
+              )
+              buffer = io.BytesIO()
+              downloader = MediaIoBaseDownload(buffer, request)
+              done = False
+              while not done:
+                  _, done = downloader.next_chunk()
+
+              data = buffer.getvalue()
+              path = out_dir / filename
+              path.write_bytes(data)
+              print(
+                  f'{filename}: bytes={len(data)} sha256={hashlib.sha256(data).hexdigest()}'
+              )
+          PY
+
+      - name: Upload recovered revisions
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovered-drive-revisions-2026-09-13
+          path: recovered_revisions/
+          retention-days: 7
