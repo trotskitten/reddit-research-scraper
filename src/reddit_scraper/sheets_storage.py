@@ -2,7 +2,7 @@
 
 The native Google Sheet is the canonical scraper destination. Existing rows are
 read for deduplication and new Reddit posts are appended as new rows with blank
-labeling fields. Existing rows are never rewritten by the scraper.
+labeling and community-review fields. Existing rows are never rewritten by the scraper.
 """
 
 from __future__ import annotations
@@ -34,7 +34,11 @@ LABEL_COLUMNS = (
     "validated_at",
 )
 
-DATASET_COLUMNS = SOURCE_COLUMNS + LABEL_COLUMNS
+REVIEW_COLUMNS = (
+    "commentable",
+)
+
+DATASET_COLUMNS = SOURCE_COLUMNS + LABEL_COLUMNS + REVIEW_COLUMNS
 DEFAULT_SHEET_NAME = "dataset"
 SHEETS_SCOPES = ("https://www.googleapis.com/auth/spreadsheets",)
 
@@ -84,7 +88,7 @@ def get_dataset_sheet_name() -> str:
 
 def _sheet_range(sheet_name: str) -> str:
     escaped = sheet_name.replace("'", "''")
-    return f"'{escaped}'!A:M"
+    return f"'{escaped}'!A:N"
 
 
 def _cell_as_string(value: object) -> str:
@@ -94,7 +98,7 @@ def _cell_as_string(value: object) -> str:
 
 
 def parse_sheet_values(values: list[list[object]]) -> list[dict[str, str]]:
-    """Validate the 13-column header and normalize returned Sheet rows."""
+    """Validate the 14-column header and normalize returned Sheet rows."""
 
     if not values:
         raise ValueError("Dataset sheet is empty; expected a header row")
@@ -136,10 +140,10 @@ def read_dataset(service, spreadsheet_id: str, sheet_name: str | None = None) ->
 def prepare_rows_for_append(
     new_rows: Iterable[Mapping[str, object]],
 ) -> list[list[object]]:
-    """Convert scraper rows to canonical 13-column Sheet rows.
+    """Convert scraper rows to canonical 14-column Sheet rows.
 
-    The scraper owns only the source columns. All label fields are deliberately
-    appended blank so the labeling workflow can fill them later.
+    The scraper owns only the source columns. All labeling and community-review
+    fields are deliberately appended blank so downstream workflows can fill them.
     """
 
     prepared: list[list[object]] = []
@@ -153,7 +157,11 @@ def prepare_rows_for_append(
             "" if row.get(column) is None else row.get(column)
             for column in SOURCE_COLUMNS
         ]
-        prepared.append(source_values + [""] * len(LABEL_COLUMNS))
+        prepared.append(
+            source_values
+            + [""] * len(LABEL_COLUMNS)
+            + [""] * len(REVIEW_COLUMNS)
+        )
 
     return prepared
 

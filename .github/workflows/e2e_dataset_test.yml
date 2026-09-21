@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/e2e_dataset_test.yml"
+      - "src/reddit_scraper/sheets_storage.py"
+      - "src/reddit_scraper/pipeline.py"
+      - "tests/test_sheets_storage.py"
   workflow_dispatch:
 
 permissions:
@@ -62,6 +65,7 @@ jobs:
       - name: Run curated scraper stream
         env:
           PYTHONPATH: src
+          DATASET_STORAGE: sheets
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
@@ -70,7 +74,7 @@ jobs:
           GOOGLE_SHEETS_SHEET_NAME: dataset
         run: python -m reddit_scraper.pipeline --stream curated
 
-      - name: Verify append preserves existing rows and blank labels
+      - name: Verify append preserves existing rows and blank downstream fields
         env:
           PYTHONPATH: src
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
@@ -80,7 +84,7 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          from reddit_scraper.sheets_storage import DATASET_COLUMNS, LABEL_COLUMNS, create_sheets_service, get_dataset_spreadsheet_id, read_dataset
+          from reddit_scraper.sheets_storage import DATASET_COLUMNS, LABEL_COLUMNS, REVIEW_COLUMNS, create_sheets_service, get_dataset_spreadsheet_id, read_dataset
 
           before = json.loads(Path("/tmp/e2e_before.json").read_text(encoding="utf-8"))
           service = create_sheets_service()
@@ -97,8 +101,9 @@ jobs:
           assert after.rows[:len(old_rows)] == old_rows, "Existing rows changed during scraper append"
 
           new_rows = after.rows[len(old_rows):]
+          downstream = LABEL_COLUMNS + REVIEW_COLUMNS
           for row in new_rows:
-              assert all(row[col] == "" for col in LABEL_COLUMNS), f"New scraper row {row['id']} has nonblank label fields"
+              assert all(row[col] == "" for col in downstream), f"New scraper row {row['id']} has nonblank downstream fields"
 
           print(f"E2E AFTER rows={len(after.rows)} appended={len(new_rows)} duplicates=0")
           print("E2E GOOGLE SHEETS SCRAPER CHECK PASSED")

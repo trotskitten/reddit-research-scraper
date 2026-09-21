@@ -5,6 +5,7 @@ import pytest
 from reddit_scraper.sheets_storage import (
     DATASET_COLUMNS,
     LABEL_COLUMNS,
+    REVIEW_COLUMNS,
     append_rows_to_sheet,
     parse_sheet_values,
     prepare_rows_for_append,
@@ -33,6 +34,7 @@ def test_parse_sheet_values_returns_rows_and_restores_trailing_blanks():
     assert rows[0]["id"] == "abc123"
     assert rows[0]["selftext"] == "Body text"
     assert all(rows[0][column] == "" for column in LABEL_COLUMNS)
+    assert all(rows[0][column] == "" for column in REVIEW_COLUMNS)
 
 
 def test_parse_sheet_values_rejects_unexpected_schema():
@@ -40,7 +42,7 @@ def test_parse_sheet_values_rejects_unexpected_schema():
         parse_sheet_values([["id", "title"], ["abc", "Example"]])
 
 
-def test_prepare_rows_appends_blank_label_fields_and_ignores_transient_fields():
+def test_prepare_rows_appends_blank_downstream_fields_and_ignores_transient_fields():
     row = sample_row("new") | {
         "matched_pain_keywords": ["blocked"],
         "matched_tools": ["jira"],
@@ -50,7 +52,8 @@ def test_prepare_rows_appends_blank_label_fields_and_ignores_transient_fields():
 
     assert len(prepared) == 1
     assert prepared[0][1] == "new"
-    assert prepared[0][-len(LABEL_COLUMNS):] == [""] * len(LABEL_COLUMNS)
+    downstream_width = len(LABEL_COLUMNS) + len(REVIEW_COLUMNS)
+    assert prepared[0][-downstream_width:] == [""] * downstream_width
 
 
 def test_prepare_rows_requires_all_source_columns():
@@ -82,10 +85,11 @@ def test_append_rows_uses_insert_rows_and_reports_count():
     assert appended == 1
     kwargs = append.call_args.kwargs
     assert kwargs["spreadsheetId"] == "spreadsheet-id"
-    assert kwargs["range"] == "'dataset'!A:M"
+    assert kwargs["range"] == "'dataset'!A:N"
     assert kwargs["valueInputOption"] == "RAW"
     assert kwargs["insertDataOption"] == "INSERT_ROWS"
-    assert kwargs["body"]["values"][0][-len(LABEL_COLUMNS):] == [""] * len(LABEL_COLUMNS)
+    downstream_width = len(LABEL_COLUMNS) + len(REVIEW_COLUMNS)
+    assert kwargs["body"]["values"][0][-downstream_width:] == [""] * downstream_width
 
 
 def test_append_no_rows_does_not_call_service():
