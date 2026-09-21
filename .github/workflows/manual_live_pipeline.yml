@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-research-sheet-write
+  group: reddit-research-dataset-write
   cancel-in-progress: false
 
 jobs:
@@ -30,32 +30,26 @@ jobs:
       - name: Run live pipeline
         env:
           PYTHONPATH: src
+          DATASET_STORAGE: csv
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SHEETS_SPREADSHEET_ID: "1crNMVzsJ9JGeIFclt6vgjGVkF_EBhK6bSaYmdHKwaM8"
-          GOOGLE_SHEETS_SHEET_NAME: dataset
+          GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
         run: python -m reddit_scraper.pipeline
 
-      - name: Verify Google Sheet after write
+      - name: Verify Drive CSV after write
         env:
           PYTHONPATH: src
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_SHEETS_SPREADSHEET_ID: "1crNMVzsJ9JGeIFclt6vgjGVkF_EBhK6bSaYmdHKwaM8"
-          GOOGLE_SHEETS_SHEET_NAME: dataset
+          GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
         run: |
           python - <<'PY'
-          from reddit_scraper.sheets_storage import (
-              DATASET_COLUMNS,
-              create_sheets_service,
-              get_dataset_spreadsheet_id,
-              read_dataset,
-          )
+          from reddit_scraper.drive_storage import DATASET_COLUMNS, create_drive_service, download_dataset, get_dataset_file_id
 
-          service = create_sheets_service()
-          spreadsheet_id = get_dataset_spreadsheet_id()
-          snapshot = read_dataset(service, spreadsheet_id)
+          service = create_drive_service()
+          file_id = get_dataset_file_id()
+          snapshot = download_dataset(service, file_id)
           ids = [str(row.get("id", "")) for row in snapshot.rows]
           columns = list(snapshot.rows[0].keys()) if snapshot.rows else []
           duplicate_ids = len(ids) - len(set(ids))
@@ -63,7 +57,7 @@ jobs:
           assert tuple(columns) == DATASET_COLUMNS if snapshot.rows else True
           assert duplicate_ids == 0
 
-          print(f"VERIFY spreadsheet_id={spreadsheet_id}")
+          print(f"VERIFY file_id={file_id}")
           print(f"VERIFY rows={len(snapshot.rows)}")
           print(f"VERIFY columns={columns}")
           print(f"VERIFY duplicate_ids={duplicate_ids}")

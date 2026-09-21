@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +12,13 @@ import yaml
 
 from reddit_scraper.cleaning import clean_posts
 from reddit_scraper.deduplication import deduplicate_posts
+from reddit_scraper.drive_storage import (
+    append_rows_to_csv_bytes,
+    create_drive_service,
+    download_dataset,
+    get_dataset_file_id,
+    upload_dataset,
+)
 from reddit_scraper.global_search import search_reddit_by_keywords
 from reddit_scraper.scraper import create_reddit_client, scrape_posts
 from reddit_scraper.sheets_storage import (
@@ -23,6 +31,7 @@ from reddit_scraper.sheets_storage import (
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path("config/config.yaml")
 VALID_STREAMS = {"both", "curated", "global"}
+VALID_STORAGE_BACKENDS = {"csv", "sheets"}
 
 
 @dataclass(frozen=True)
@@ -86,6 +95,16 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
     return config
 
 
+def _storage_backend() -> str:
+    backend = os.getenv("DATASET_STORAGE", "csv").strip().lower()
+    if backend not in VALID_STORAGE_BACKENDS:
+        raise ValueError(
+            f"Invalid DATASET_STORAGE {backend!r}; "
+            f"expected one of {sorted(VALID_STORAGE_BACKENDS)}"
+        )
+    return backend
+
+
 def run_pipeline(
     config_path: str | Path = DEFAULT_CONFIG_PATH,
     *,
@@ -94,9 +113,8 @@ def run_pipeline(
 ) -> PipelineResult:
     """Run one Reddit discovery/deduplicate/store cycle.
 
-    The canonical operational destination is a native Google Sheet. The scraper
-    reads current rows for deduplication, then appends only genuinely new Reddit
-    posts. Existing rows and all labeling fields are left untouched.
+    During the staged migration, DATASET_STORAGE selects either the existing
+    Drive CSV backend or the new native Google Sheets backend.
     """
 
     if stream not in VALID_STREAMS:
@@ -105,11 +123,24 @@ def run_pipeline(
         )
 
     config = load_config(config_path)
+    storage_backend = _storage_backend()
 
-    sheets_service = create_sheets_service()
-    spreadsheet_id = get_dataset_spreadsheet_id()
-    snapshot = read_dataset(sheets_service, spreadsheet_id)
-    LOGGER.info("Loaded %d existing dataset rows from Google Sheets", len(snapshot.rows))
+    if storage_backend == "sheets":
+        storage_service = create_sheets_service()
+        storage_id = get_dataset_spreadsheet_id()
+        snapshot = read_dataset(storage_service, storage_id)
+        LOGGER.info(
+            "Loaded %d existing dataset rows from Google Sheets",
+            len(snapshot.rows),
+        )
+    else:
+        storage_service = create_drive_service()
+        storage_id = get_dataset_file_id()
+        snapshot = download_dataset(storage_service, storage_id)
+        LOGGER.info(
+            "Loaded %d existing dataset rows from Drive CSV",
+            len(snapshot.rows),
+        )
 
     reddit_client = create_reddit_client()
     subreddit_lookback_hours = int(config["reddit"]["subreddit_lookback_hours"])
@@ -163,7 +194,7 @@ def run_pipeline(
 
     uploaded = False
     if dry_run:
-        LOGGER.info("DRY RUN: Google Sheets writes are disabled")
+        LOGGER.info("DRY RUN: dataset writes are disabled")
 
         curated_ids = {str(post.get("post_id", "")) for post in subreddit_posts}
         global_by_id = {
@@ -192,19 +223,25 @@ def run_pipeline(
                 post.get("title", ""),
             )
     elif unique_posts:
-        appended = append_rows_to_sheet(
-            sheets_service,
-            spreadsheet_id,
-            unique_posts,
-        )
-        if appended != len(unique_posts):
-            raise RuntimeError(
-                f"Appended {appended} rows to Google Sheets; expected {len(unique_posts)}"
+        if storage_backend == "sheets":
+            appended = append_rows_to_sheet(
+                storage_service,
+                storage_id,
+                unique_posts,
             )
+            if appended != len(unique_posts):
+                raise RuntimeError(
+                    f"Appended {appended} rows to Google Sheets; "
+                    f"expected {len(unique_posts)}"
+                )
+            LOGGER.info("Appended %d posts to the Google Sheet dataset", appended)
+        else:
+            updated_bytes = append_rows_to_csv_bytes(snapshot.raw_bytes, unique_posts)
+            upload_dataset(storage_service, storage_id, updated_bytes)
+            LOGGER.info("Appended %d posts to the Drive CSV dataset", len(unique_posts))
         uploaded = True
-        LOGGER.info("Appended %d posts to the Google Sheet dataset", appended)
     else:
-        LOGGER.info("No unique posts to append; Google Sheet left unchanged")
+        LOGGER.info("No unique posts to append; dataset left unchanged")
 
     return PipelineResult(
         existing_rows=len(snapshot.rows),
@@ -236,6 +273,7 @@ def main() -> None:
     print(
         "Pipeline complete: "
         f"stream={args.stream}, "
+        f"storage={_storage_backend()}, "
         f"existing={result.existing_rows}, "
         f"subreddits={result.subreddit_posts}, "
         f"global_search={result.global_search_posts}, "

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from reddit_scraper import pipeline
-from reddit_scraper.drive_storage import DatasetSnapshot
+from reddit_scraper.sheets_storage import DatasetSnapshot
 
 
 def write_config(path: Path) -> None:
@@ -26,21 +26,30 @@ matching:
 
 
 def setup_common(monkeypatch, snapshot):
-    monkeypatch.setattr(pipeline, "create_drive_service", lambda: "drive")
-    monkeypatch.setattr(pipeline, "get_dataset_file_id", lambda: "file-id")
-    monkeypatch.setattr(pipeline, "download_dataset", lambda service, file_id: snapshot)
+    monkeypatch.setenv("DATASET_STORAGE", "sheets")
+    monkeypatch.setattr(pipeline, "create_sheets_service", lambda: "sheets")
+    monkeypatch.setattr(
+        pipeline,
+        "get_dataset_spreadsheet_id",
+        lambda: "spreadsheet-id",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "read_dataset",
+        lambda service, spreadsheet_id: snapshot,
+    )
     monkeypatch.setattr(pipeline, "create_reddit_client", lambda: "reddit")
-    monkeypatch.setattr(pipeline, "append_rows_to_csv_bytes", lambda raw_bytes, rows: b"updated")
-    monkeypatch.setattr(pipeline, "upload_dataset", lambda service, file_id, raw_bytes: None)
+    monkeypatch.setattr(
+        pipeline,
+        "append_rows_to_sheet",
+        lambda service, spreadsheet_id, rows: len(list(rows)),
+    )
 
 
 def test_curated_stream_never_calls_global_search(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
-    snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext\n",
-        rows=[],
-    )
+    snapshot = DatasetSnapshot(rows=[])
     setup_common(monkeypatch, snapshot)
 
     curated_raw = {"post_id": "curated"}
@@ -57,7 +66,11 @@ def test_curated_stream_never_calls_global_search(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "scrape_posts", fake_scrape)
     monkeypatch.setattr(pipeline, "search_reddit_by_keywords", fail_global)
     monkeypatch.setattr(pipeline, "clean_posts", lambda posts: [cleaned])
-    monkeypatch.setattr(pipeline, "deduplicate_posts", lambda new_posts, existing_posts: list(new_posts))
+    monkeypatch.setattr(
+        pipeline,
+        "deduplicate_posts",
+        lambda new_posts, existing_posts: list(new_posts),
+    )
 
     result = pipeline.run_pipeline(config_path, stream="curated")
 
@@ -70,10 +83,7 @@ def test_curated_stream_never_calls_global_search(tmp_path, monkeypatch):
 def test_global_stream_never_calls_curated_scraper(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
-    snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext\n",
-        rows=[],
-    )
+    snapshot = DatasetSnapshot(rows=[])
     setup_common(monkeypatch, snapshot)
 
     global_raw = {
@@ -88,13 +98,19 @@ def test_global_stream_never_calls_curated_scraper(tmp_path, monkeypatch):
         raise AssertionError("Curated scraper must not run in global-only mode")
 
     def fake_global(reddit, pain_keywords, tools, lookback_hours, case_sensitive=False):
-        global_calls.append((reddit, list(pain_keywords), list(tools), lookback_hours, case_sensitive))
+        global_calls.append(
+            (reddit, list(pain_keywords), list(tools), lookback_hours, case_sensitive)
+        )
         return [global_raw]
 
     monkeypatch.setattr(pipeline, "scrape_posts", fail_curated)
     monkeypatch.setattr(pipeline, "search_reddit_by_keywords", fake_global)
     monkeypatch.setattr(pipeline, "clean_posts", lambda posts: [cleaned])
-    monkeypatch.setattr(pipeline, "deduplicate_posts", lambda new_posts, existing_posts: list(new_posts))
+    monkeypatch.setattr(
+        pipeline,
+        "deduplicate_posts",
+        lambda new_posts, existing_posts: list(new_posts),
+    )
 
     result = pipeline.run_pipeline(config_path, stream="global")
 

@@ -26,6 +26,7 @@ matching:
 
 
 def wire_common(monkeypatch, snapshot):
+    monkeypatch.setenv("DATASET_STORAGE", "sheets")
     monkeypatch.setattr(pipeline, "create_sheets_service", lambda: "sheets")
     monkeypatch.setattr(
         pipeline,
