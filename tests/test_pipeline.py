@@ -30,7 +30,7 @@ def test_pipeline_merges_unfiltered_subreddit_posts_with_global_search(tmp_path,
     write_config(config_path)
 
     snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext\n",
+        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext,batch_id,label1,label2,label3,validated_at\n",
         rows=[{"id": "existing", "selftext": "old body"}],
     )
     subreddit_posts = [{"post_id": "a"}, {"post_id": "b"}]
@@ -104,7 +104,7 @@ def test_pipeline_does_not_keyword_filter_curated_subreddit_stream(tmp_path, mon
     write_config(config_path)
 
     snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext\n",
+        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext,batch_id,label1,label2,label3,validated_at\n",
         rows=[],
     )
     curated_post = {"post_id": "curated", "title": "No configured keywords here"}
@@ -152,7 +152,7 @@ def test_pipeline_does_not_upload_when_no_unique_posts(tmp_path, monkeypatch):
     write_config(config_path)
 
     snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext\n",
+        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext,batch_id,label1,label2,label3,validated_at\n",
         rows=[],
     )
     uploads = []
@@ -191,7 +191,7 @@ def test_dry_run_never_constructs_or_uploads_dataset(tmp_path, monkeypatch):
     write_config(config_path)
 
     snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext\n",
+        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext,batch_id,label1,label2,label3,validated_at\n",
         rows=[],
     )
     curated_raw = {"post_id": "new-post"}
