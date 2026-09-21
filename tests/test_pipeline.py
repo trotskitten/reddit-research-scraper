@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from reddit_scraper import pipeline
-from reddit_scraper.drive_storage import DatasetSnapshot
+from reddit_scraper.sheets_storage import DatasetSnapshot
 
 
 def write_config(path: Path) -> None:
@@ -25,14 +25,26 @@ matching:
     )
 
 
+def wire_common(monkeypatch, snapshot):
+    monkeypatch.setattr(pipeline, "create_sheets_service", lambda: "sheets")
+    monkeypatch.setattr(
+        pipeline,
+        "get_dataset_spreadsheet_id",
+        lambda: "spreadsheet-id",
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "read_dataset",
+        lambda service, spreadsheet_id: snapshot,
+    )
+    monkeypatch.setattr(pipeline, "create_reddit_client", lambda: "reddit")
+
+
 def test_pipeline_merges_unfiltered_subreddit_posts_with_global_search(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
 
-    snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext,batch_id,label1,label2,label3,validated_at\n",
-        rows=[{"id": "existing", "selftext": "old body"}],
-    )
+    snapshot = DatasetSnapshot(rows=[{"id": "existing", "selftext": "old body"}])
     subreddit_posts = [{"post_id": "a"}, {"post_id": "b"}]
     global_posts = [{"post_id": "c", "matched_pain_keywords": ["blocked"], "matched_tools": ["jira"]}]
     cleaned_posts = [
@@ -41,15 +53,12 @@ def test_pipeline_merges_unfiltered_subreddit_posts_with_global_search(tmp_path,
         {"id": "c", "selftext": "three"},
     ]
     unique_posts = [{"id": "c", "selftext": "three"}]
-    uploads = []
+    appends = []
     clean_inputs = []
     subreddit_calls = []
     global_calls = []
 
-    monkeypatch.setattr(pipeline, "create_drive_service", lambda: "drive")
-    monkeypatch.setattr(pipeline, "get_dataset_file_id", lambda: "file-id")
-    monkeypatch.setattr(pipeline, "download_dataset", lambda service, file_id: snapshot)
-    monkeypatch.setattr(pipeline, "create_reddit_client", lambda: "reddit")
+    wire_common(monkeypatch, snapshot)
 
     def fake_scrape(reddit, subreddits, lookback_hours):
         subreddit_calls.append((reddit, list(subreddits), lookback_hours))
@@ -76,13 +85,10 @@ def test_pipeline_merges_unfiltered_subreddit_posts_with_global_search(tmp_path,
     )
     monkeypatch.setattr(
         pipeline,
-        "append_rows_to_csv_bytes",
-        lambda raw_bytes, rows: b"updated-dataset",
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "upload_dataset",
-        lambda service, file_id, raw_bytes: uploads.append((service, file_id, raw_bytes)),
+        "append_rows_to_sheet",
+        lambda service, spreadsheet_id, rows: appends.append(
+            (service, spreadsheet_id, list(rows))
+        ) or len(unique_posts),
     )
 
     result = pipeline.run_pipeline(config_path)
@@ -96,25 +102,19 @@ def test_pipeline_merges_unfiltered_subreddit_posts_with_global_search(tmp_path,
     assert result.combined_candidates == 3
     assert result.unique_posts == 1
     assert result.uploaded is True
-    assert uploads == [("drive", "file-id", b"updated-dataset")]
+    assert appends == [("sheets", "spreadsheet-id", unique_posts)]
 
 
 def test_pipeline_does_not_keyword_filter_curated_subreddit_stream(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
 
-    snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext,batch_id,label1,label2,label3,validated_at\n",
-        rows=[],
-    )
+    snapshot = DatasetSnapshot(rows=[])
     curated_post = {"post_id": "curated", "title": "No configured keywords here"}
     cleaned_post = {"id": "curated", "selftext": "ordinary subreddit post"}
     clean_inputs = []
 
-    monkeypatch.setattr(pipeline, "create_drive_service", lambda: "drive")
-    monkeypatch.setattr(pipeline, "get_dataset_file_id", lambda: "file-id")
-    monkeypatch.setattr(pipeline, "download_dataset", lambda service, file_id: snapshot)
-    monkeypatch.setattr(pipeline, "create_reddit_client", lambda: "reddit")
+    wire_common(monkeypatch, snapshot)
     monkeypatch.setattr(
         pipeline,
         "scrape_posts",
@@ -136,8 +136,11 @@ def test_pipeline_does_not_keyword_filter_curated_subreddit_stream(tmp_path, mon
         "deduplicate_posts",
         lambda new_posts, existing_posts: list(new_posts),
     )
-    monkeypatch.setattr(pipeline, "append_rows_to_csv_bytes", lambda raw_bytes, rows: b"updated")
-    monkeypatch.setattr(pipeline, "upload_dataset", lambda service, file_id, raw_bytes: None)
+    monkeypatch.setattr(
+        pipeline,
+        "append_rows_to_sheet",
+        lambda service, spreadsheet_id, rows: len(list(rows)),
+    )
 
     result = pipeline.run_pipeline(config_path)
 
@@ -147,20 +150,14 @@ def test_pipeline_does_not_keyword_filter_curated_subreddit_stream(tmp_path, mon
     assert result.unique_posts == 1
 
 
-def test_pipeline_does_not_upload_when_no_unique_posts(tmp_path, monkeypatch):
+def test_pipeline_does_not_write_when_no_unique_posts(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
 
-    snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext,batch_id,label1,label2,label3,validated_at\n",
-        rows=[],
-    )
-    uploads = []
+    snapshot = DatasetSnapshot(rows=[])
+    appends = []
 
-    monkeypatch.setattr(pipeline, "create_drive_service", lambda: "drive")
-    monkeypatch.setattr(pipeline, "get_dataset_file_id", lambda: "file-id")
-    monkeypatch.setattr(pipeline, "download_dataset", lambda service, file_id: snapshot)
-    monkeypatch.setattr(pipeline, "create_reddit_client", lambda: "reddit")
+    wire_common(monkeypatch, snapshot)
     monkeypatch.setattr(pipeline, "scrape_posts", lambda reddit, subreddits, lookback_hours: [])
     monkeypatch.setattr(
         pipeline,
@@ -171,8 +168,8 @@ def test_pipeline_does_not_upload_when_no_unique_posts(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "deduplicate_posts", lambda new_posts, existing_posts: [])
     monkeypatch.setattr(
         pipeline,
-        "upload_dataset",
-        lambda service, file_id, raw_bytes: uploads.append((service, file_id, raw_bytes)),
+        "append_rows_to_sheet",
+        lambda service, spreadsheet_id, rows: appends.append(rows),
     )
 
     result = pipeline.run_pipeline(config_path)
@@ -183,17 +180,14 @@ def test_pipeline_does_not_upload_when_no_unique_posts(tmp_path, monkeypatch):
     assert result.combined_candidates == 0
     assert result.unique_posts == 0
     assert result.uploaded is False
-    assert uploads == []
+    assert appends == []
 
 
-def test_dry_run_never_constructs_or_uploads_dataset(tmp_path, monkeypatch):
+def test_dry_run_never_writes_sheet(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
 
-    snapshot = DatasetSnapshot(
-        raw_bytes=b"subreddit,id,title,author,created_utc,created_iso,url,selftext,batch_id,label1,label2,label3,validated_at\n",
-        rows=[],
-    )
+    snapshot = DatasetSnapshot(rows=[])
     curated_raw = {"post_id": "new-post"}
     unique_posts = [
         {
@@ -204,10 +198,7 @@ def test_dry_run_never_constructs_or_uploads_dataset(tmp_path, monkeypatch):
         }
     ]
 
-    monkeypatch.setattr(pipeline, "create_drive_service", lambda: "drive")
-    monkeypatch.setattr(pipeline, "get_dataset_file_id", lambda: "file-id")
-    monkeypatch.setattr(pipeline, "download_dataset", lambda service, file_id: snapshot)
-    monkeypatch.setattr(pipeline, "create_reddit_client", lambda: "reddit")
+    wire_common(monkeypatch, snapshot)
     monkeypatch.setattr(
         pipeline,
         "scrape_posts",
@@ -226,10 +217,9 @@ def test_dry_run_never_constructs_or_uploads_dataset(tmp_path, monkeypatch):
     )
 
     def fail_if_called(*args, **kwargs):
-        raise AssertionError("Drive write path must not be called during dry run")
+        raise AssertionError("Google Sheets write path must not be called during dry run")
 
-    monkeypatch.setattr(pipeline, "append_rows_to_csv_bytes", fail_if_called)
-    monkeypatch.setattr(pipeline, "upload_dataset", fail_if_called)
+    monkeypatch.setattr(pipeline, "append_rows_to_sheet", fail_if_called)
 
     result = pipeline.run_pipeline(config_path, dry_run=True)
 

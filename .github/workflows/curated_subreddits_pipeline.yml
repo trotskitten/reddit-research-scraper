@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: reddit-research-drive-write
+  group: reddit-research-sheet-write
   cancel-in-progress: false
 
 jobs:
@@ -37,5 +37,6 @@ jobs:
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_DRIVE_FILE_ID: ${{ secrets.GOOGLE_DRIVE_FILE_ID }}
+          GOOGLE_SHEETS_SPREADSHEET_ID: "1crNMVzsJ9JGeIFclt6vgjGVkF_EBhK6bSaYmdHKwaM8"
+          GOOGLE_SHEETS_SHEET_NAME: dataset
         run: python -m reddit_scraper.pipeline --stream curated

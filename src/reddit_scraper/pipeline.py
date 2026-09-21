@@ -11,15 +11,14 @@ import yaml
 
 from reddit_scraper.cleaning import clean_posts
 from reddit_scraper.deduplication import deduplicate_posts
-from reddit_scraper.drive_storage import (
-    append_rows_to_csv_bytes,
-    create_drive_service,
-    download_dataset,
-    get_dataset_file_id,
-    upload_dataset,
-)
 from reddit_scraper.global_search import search_reddit_by_keywords
 from reddit_scraper.scraper import create_reddit_client, scrape_posts
+from reddit_scraper.sheets_storage import (
+    append_rows_to_sheet,
+    create_sheets_service,
+    get_dataset_spreadsheet_id,
+    read_dataset,
+)
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path("config/config.yaml")
@@ -95,15 +94,9 @@ def run_pipeline(
 ) -> PipelineResult:
     """Run one Reddit discovery/deduplicate/store cycle.
 
-    ``stream`` controls which independent retrieval stream runs:
-
-    - ``curated``: every recent post from configured subreddits, with no keyword filter.
-    - ``global``: r/all keyword search, locally requiring at least one pain + one tool.
-    - ``both``: run and merge both streams for diagnostics/manual runs.
-
-    Every mode deduplicates against a fresh Google Drive dataset snapshot before
-    writing. When ``dry_run`` is true, all real reads still happen but the Drive
-    write path is never called.
+    The canonical operational destination is a native Google Sheet. The scraper
+    reads current rows for deduplication, then appends only genuinely new Reddit
+    posts. Existing rows and all labeling fields are left untouched.
     """
 
     if stream not in VALID_STREAMS:
@@ -113,10 +106,10 @@ def run_pipeline(
 
     config = load_config(config_path)
 
-    drive_service = create_drive_service()
-    dataset_file_id = get_dataset_file_id()
-    snapshot = download_dataset(drive_service, dataset_file_id)
-    LOGGER.info("Loaded %d existing dataset rows", len(snapshot.rows))
+    sheets_service = create_sheets_service()
+    spreadsheet_id = get_dataset_spreadsheet_id()
+    snapshot = read_dataset(sheets_service, spreadsheet_id)
+    LOGGER.info("Loaded %d existing dataset rows from Google Sheets", len(snapshot.rows))
 
     reddit_client = create_reddit_client()
     subreddit_lookback_hours = int(config["reddit"]["subreddit_lookback_hours"])
@@ -170,7 +163,7 @@ def run_pipeline(
 
     uploaded = False
     if dry_run:
-        LOGGER.info("DRY RUN: Drive writes are disabled")
+        LOGGER.info("DRY RUN: Google Sheets writes are disabled")
 
         curated_ids = {str(post.get("post_id", "")) for post in subreddit_posts}
         global_by_id = {
@@ -199,12 +192,19 @@ def run_pipeline(
                 post.get("title", ""),
             )
     elif unique_posts:
-        updated_bytes = append_rows_to_csv_bytes(snapshot.raw_bytes, unique_posts)
-        upload_dataset(drive_service, dataset_file_id, updated_bytes)
+        appended = append_rows_to_sheet(
+            sheets_service,
+            spreadsheet_id,
+            unique_posts,
+        )
+        if appended != len(unique_posts):
+            raise RuntimeError(
+                f"Appended {appended} rows to Google Sheets; expected {len(unique_posts)}"
+            )
         uploaded = True
-        LOGGER.info("Appended %d posts to the Drive dataset", len(unique_posts))
+        LOGGER.info("Appended %d posts to the Google Sheet dataset", appended)
     else:
-        LOGGER.info("No unique posts to append; Drive dataset left unchanged")
+        LOGGER.info("No unique posts to append; Google Sheet left unchanged")
 
     return PipelineResult(
         existing_rows=len(snapshot.rows),
