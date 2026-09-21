@@ -68,7 +68,7 @@ def test_append_handles_multiline_selftext_and_quotes():
     assert rows[-1]["selftext"] == 'First line\nSecond line with "quotes"'
 
 
-def test_append_ignores_transient_extra_fields():
+def test_append_ignores_transient_extra_fields_and_leaves_labels_blank():
     original = make_csv([sample_row("old")])
     new_row = sample_row("new") | {
         "matched_pain_keywords": ["blocked"],
@@ -79,9 +79,14 @@ def test_append_ignores_transient_extra_fields():
     rows = parse_dataset_csv(updated)
 
     assert tuple(rows[-1].keys()) == DATASET_COLUMNS
+    assert rows[-1]["batch_id"] == ""
+    assert rows[-1]["label1"] == ""
+    assert rows[-1]["label2"] == ""
+    assert rows[-1]["label3"] == ""
+    assert rows[-1]["validated_at"] == ""
 
 
-def test_append_requires_all_dataset_columns():
+def test_append_requires_all_source_columns():
     original = make_csv([sample_row("old")])
     new_row = sample_row("new")
     del new_row["author"]
