@@ -18,7 +18,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
-DATASET_COLUMNS = (
+SOURCE_COLUMNS = (
     "subreddit",
     "id",
     "title",
@@ -28,6 +28,16 @@ DATASET_COLUMNS = (
     "url",
     "selftext",
 )
+
+LABEL_COLUMNS = (
+    "batch_id",
+    "label1",
+    "label2",
+    "label3",
+    "validated_at",
+)
+
+DATASET_COLUMNS = SOURCE_COLUMNS + LABEL_COLUMNS
 
 DRIVE_SCOPES = ("https://www.googleapis.com/auth/drive",)
 
@@ -73,7 +83,7 @@ def get_dataset_file_id() -> str:
 
 
 def parse_dataset_csv(raw_bytes: bytes) -> list[dict[str, str]]:
-    """Parse canonical dataset bytes and verify the expected eight-column schema."""
+    """Parse canonical dataset bytes and verify the expected source+label schema."""
 
     text = raw_bytes.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text, newline=""))
@@ -135,11 +145,12 @@ def append_rows_to_csv_bytes(
         append_buffer,
         fieldnames=DATASET_COLUMNS,
         extrasaction="ignore",
+        restval="",
         lineterminator=line_terminator,
     )
 
     for row in rows:
-        missing = [column for column in DATASET_COLUMNS if column not in row]
+        missing = [column for column in SOURCE_COLUMNS if column not in row]
         if missing:
             raise ValueError(f"New dataset row is missing required columns: {missing}")
         writer.writerow(row)
