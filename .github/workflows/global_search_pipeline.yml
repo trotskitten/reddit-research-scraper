@@ -1,8 +1,6 @@
 name: Global Reddit Search Pipeline
 
 on:
-  schedule:
-    - cron: "0 */3 * * *"
   workflow_dispatch:
 
 permissions:
