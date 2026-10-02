@@ -1,8 +1,6 @@
 name: Curated Subreddits Pipeline
 
 on:
-  schedule:
-    - cron: "30 */12 * * *"
   workflow_dispatch:
 
 permissions:
